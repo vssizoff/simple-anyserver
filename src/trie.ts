@@ -131,13 +131,35 @@ class RouteTrie {
             normalized = normalized.toLowerCase();
         }
 
-        // Split into segments, preserving empties when fixedPath is disabled
+        // Split into segments
         const segments = normalized.split('/');
-        const filteredSegments = useFixedPath || useTrailingSlash
-            ? segments.filter(segment => segment !== '')
-            : segments.filter((segment, index) => !(index === 0 && segment === '') && !(index === segments.length - 1 && segment === ''));
 
-        return this._match(this.root, filteredSegments, 0, {});
+        // Filtered segments logic
+        let filtered: string[] = [];
+        let i = 0;
+        while (i < segments.length && segments[i] === '') i++;
+
+        let k = segments.length - 1;
+        while (k >= i && segments[k] === '') k--;
+
+        const contentEnd = k + 1;
+        const trailingEmptiesCount = segments.length - contentEnd;
+
+        for (let m = i; m < contentEnd; m++) {
+            if (segments[m] !== '' || !useFixedPath) {
+                filtered.push(segments[m]);
+            }
+        }
+
+        const addTrailing = !useTrailingSlash && trailingEmptiesCount > 0;
+        if (addTrailing) {
+            const numToAdd = useFixedPath ? 1 : trailingEmptiesCount;
+            for (let n = 0; n < numToAdd; n++) {
+                filtered.push('');
+            }
+        }
+
+        return this._match(this.root, filtered, 0, {});
     }
 
     private _addRoute(node: TrieNode, segments: string[], index: number, handler: Function): void {
