@@ -1,10 +1,10 @@
 import * as http from "node:http";
-import {Trie, type TrieOptions} from "route-trie";
 import type {IncomingMessage, ServerResponse} from "node:http";
 import {type Chain, createChain} from "./chain.js";
+import {RouteTrie, RouteTrieOptions} from "./trie";
 
 export type AnyServerOptions = {
-    routeTrie?: TrieOptions
+    routeTrie?: RouteTrieOptions;
 };
 
 export type HttpRequest = IncomingMessage & {params: Record<string, string>};
@@ -19,39 +19,37 @@ export class HttpRouteConstructor<Acc extends object = {}> {
         else this.chain = createChain();
     }
 
-    public add<R extends object>(handler: (request: HttpRequest, response: ServerResponse, prev: Acc) => Promise<R | void> | R | void): HttpRouteConstructor<Acc> {
+    public add<R extends object | void>(handler: (request: HttpRequest, response: ServerResponse, prev: Acc) => Promise<R> | R): HttpRouteConstructor<Acc> {
         if (this.newConstructor) return this.newConstructor.add(handler);
-        let newConstructor = new HttpRouteConstructor(this.chain.add(
+        let newConstructor = new HttpRouteConstructor(this.chain.add<R>(
             async (prev, {request, response}): Promise<R> => {
-                return (await handler(request, response, prev)) ?? ({} as R);
+                return handler(request, response, prev);
             }
         ));
         this.newConstructor = newConstructor;
         return newConstructor;
     }
 
-    public async run(request: HttpRequest, response: ServerResponse): Promise<void> {
+    public async run(request: HttpRequest, response: ServerResponse): Promise<boolean> {
         if (this.newConstructor) return this.newConstructor.run(request, response);
-        await this.chain.run({request, response});
+        return this.chain.run({request, response});
     }
 }
 
-type RawHttpHandler = (request: IncomingMessage, response: ServerResponse, params: Record<string, string>) => Promise<void>;
-
 export class AnyServer {
-    private trie: Trie;
+    private trie: RouteTrie;
 
     constructor(options: AnyServerOptions = {}) {
-        this.trie = new Trie(options.routeTrie);
+        this.trie = new RouteTrie(options.routeTrie);
     }
 
-    http(route: string, method: string) {
+    http(route: string, method?: string) {
         let routeConstructor = new HttpRouteConstructor();
-        let node = this.trie.define(route);
-        node.handle(method.toUpperCase(), async (request: IncomingMessage, response: ServerResponse, params: Record<string, string>) => {
+        this.trie.addRoute(route, async (request: IncomingMessage, response: ServerResponse, params: Record<string, string>) => {
+            if (method && request.method?.toUpperCase() != method.toUpperCase()) return;
             let req: HttpRequest = request as HttpRequest;
             req.params = params;
-            await routeConstructor.run(req, response);
+            return routeConstructor.run(req, response);
         });
         return routeConstructor;
     }
@@ -59,27 +57,36 @@ export class AnyServer {
     listen(port: number = 8080, host: string = "0.0.0.0", listeningListener?: () => void) {
         return http.createServer(async (request: IncomingMessage, response: ServerResponse) => {
             let matched = this.trie.match(request.url ?? "/");
-            let handler: RawHttpHandler | undefined = matched.node?.getHandler(request.method?.toUpperCase() ?? "GET");
-            if (!handler) return;
-            await handler(request, response, matched.params);
+            for (let match of matched) {
+                for (let handler of match.handlers) {
+                    let next = await handler(request, response, match.params) as boolean;
+                    if (!next) return;
+                }
+            }
         }).listen(port, host, listeningListener);
     }
 }
 
 const app = new AnyServer();
 
-// app.http("/test/:id", "GET")
+app.http("/test/:id", "GET")
+    .add((request, response) => {
+        console.log(request.method, request.url, request.params);
+        response.write(`${request.method} ${request.url}`)
+        response.end();
+    });
+
+// app.http("/:test*", "GET")
 //     .add((request, response) => {
 //         console.log(request.method, request.url, request.params);
 //         response.write(`${request.method} ${request.url}`)
 //         response.end();
 //     });
 
-app.http("/:test*", "GET")
+app.http("/*")
     .add((request, response) => {
-        console.log(request.method, request.url, request.params);
-        response.write(`${request.method} ${request.url}`)
-        response.end();
+        response.statusCode = 404;
+        response.end("404 Not Found");
     });
 
 app.listen();

@@ -1,4 +1,4 @@
-interface ParsedSegment {
+export interface ParsedSegment {
     type:
         | 'static'
         | 'named'
@@ -14,18 +14,18 @@ interface ParsedSegment {
     suffix?: string;
 }
 
-interface MatchResult {
+export interface MatchResult {
     params: Record<string, string>;
     handlers: Function[];
 }
 
-interface RouteTrieOptions {
+export interface RouteTrieOptions {
     ignoreCase?: boolean;
     fixedPath?: boolean;
     trailingSlash?: boolean;
 }
 
-class TrieNode {
+export class TrieNode {
     staticChildren: Map<string, TrieNode> = new Map();
     paramChildren: {
         type: 'named' | 'named-regex' | 'named-suffix' | 'named-regex-suffix';
@@ -43,7 +43,7 @@ class TrieNode {
     }
 }
 
-class RouteTrie {
+export class RouteTrie {
     private root: TrieNode = new TrieNode();
     private options: Required<RouteTrieOptions>;
     private routes: Map<string, Function[]> = new Map();
@@ -369,73 +369,3 @@ class RouteTrie {
         return results;
     }
 }
-
-// Create strict router with all options disabled
-const strictRouter = new RouteTrie({
-    ignoreCase: false,
-    fixedPath: false,
-    trailingSlash: false
-});
-
-// Add routes
-strictRouter.addRoute('/api/foo', () => console.log('Handler 1: API Foo'));
-strictRouter.addRoute('/foo', () => console.log('Handler 2: Foo'));
-
-// Create lenient router with all options enabled for comparison
-const lenientRouter = new RouteTrie({
-    ignoreCase: true,
-    fixedPath: true,
-    trailingSlash: true
-});
-
-lenientRouter.addRoute('/api/foo', () => console.log('Handler: API Foo'));
-lenientRouter.addRoute('/foo', () => console.log('Handler: Foo'));
-
-console.log('=== STRICT ROUTER TESTS (all options disabled) ===\n');
-
-const strictTests = [
-    { path: '/api//foo', shouldMatch: false, route: '/api/foo' },
-    { path: '/api/foo/', shouldMatch: false, route: '/api/foo' },
-    { path: '/foo/', shouldMatch: false, route: '/foo' },
-    { path: '/FOO', shouldMatch: false, route: '/foo' },
-    { path: '/api/foo', shouldMatch: true, route: '/api/foo' },  // Should match exact route
-    { path: '/foo', shouldMatch: true, route: '/foo' }            // Should match exact route
-];
-
-strictTests.forEach(test => {
-    const matches = strictRouter.match(test.path);
-    const matched = matches.length > 0;
-
-    console.log(`TEST: "${test.path}" matching "${test.route}"`);
-    console.log(`RESULT: ${matched ? '✓ MATCHED' : '✗ NO MATCH'} (expected: ${test.shouldMatch ? 'match' : 'no match'})`);
-
-    if (matched) {
-        console.log(`PARAMS:`, matches[0].params);
-        console.log(`HANDLERS:`, matches[0].handlers.length);
-    }
-    console.log('');
-});
-
-console.log('=== LENIENT ROUTER TESTS (all options enabled) ===\n');
-
-const lenientTests = [
-    { path: '/api//foo', shouldMatch: true },
-    { path: '/api/foo/', shouldMatch: true },
-    { path: '/foo/', shouldMatch: true },
-    { path: '/FOO', shouldMatch: true },
-    { path: '/api/foo', shouldMatch: true }
-];
-
-lenientTests.forEach(test => {
-    const matches = lenientRouter.match(test.path);
-    const matched = matches.length > 0;
-
-    console.log(`TEST: "${test.path}"`);
-    console.log(`RESULT: ${matched ? '✓ MATCHED' : '✗ NO MATCH'} (expected: ${test.shouldMatch ? 'match' : 'no match'})`);
-
-    if (matched) {
-        console.log(`PARAMS:`, matches[0].params);
-        console.log(`HANDLERS:`, matches[0].handlers.length);
-    }
-    console.log('');
-});
