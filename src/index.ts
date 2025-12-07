@@ -1,7 +1,8 @@
 import * as http from "node:http";
 import type {IncomingMessage, ServerResponse} from "node:http";
 import {type Chain, createChain} from "./chain.js";
-import {RouteTrie, RouteTrieOptions} from "./trie";
+import {RouteTrie, RouteTrieOptions} from "./trie.js";
+import { WebSocketServer } from 'ws';
 
 export type AnyServerOptions = {
     routeTrie?: RouteTrieOptions;
@@ -36,11 +37,42 @@ export class HttpRouteConstructor<Acc extends object = {}> {
     }
 }
 
+export type WSChain<Acc extends object> = Chain<Acc, {ws: WebSocket, request: HttpRequest}>;
+
+export class WSRouteConstructor<Acc extends object = {}> {
+    private chain: WSChain<Acc>;
+    private newConstructor: WSRouteConstructor<Acc> | undefined;
+
+    constructor(chain?: WSChain<Acc>) {
+        if (chain) this.chain = chain;
+        else this.chain = createChain();
+    }
+
+    public add<R extends object | void>(handler: (ws: WebSocket, request: HttpRequest, prev: Acc) => Promise<R> | R): WSRouteConstructor<Acc> {
+        if (this.newConstructor) return this.newConstructor.add(handler);
+        let newConstructor = new WSRouteConstructor(this.chain.add<R>(
+            async (prev, {ws, request}): Promise<R> => {
+                return handler(ws, request, prev);
+            }
+        ));
+        this.newConstructor = newConstructor;
+        return newConstructor;
+    }
+
+    public async run(ws: WebSocket, request: HttpRequest): Promise<boolean> {
+        if (this.newConstructor) return this.newConstructor.run(ws, request);
+        return this.chain.run({ws, request});
+    }
+}
+
 export class AnyServer {
     private trie: RouteTrie;
+    private wsTrie: RouteTrie;
+    private wss = new WebSocketServer({ noServer: true });
 
     constructor(options: AnyServerOptions = {}) {
         this.trie = new RouteTrie(options.routeTrie);
+        this.wsTrie = new RouteTrie(options.routeTrie);
     }
 
     http(route: string, method?: string) {
@@ -54,8 +86,18 @@ export class AnyServer {
         return routeConstructor;
     }
 
+    ws(route: string) {
+        let routeConstructor = new WSRouteConstructor();
+        this.trie.addRoute(route, async (ws: WebSocket, request: IncomingMessage, params: Record<string, string>) => {
+            let req: HttpRequest = request as HttpRequest;
+            req.params = params;
+            return routeConstructor.run(ws, req);
+        });
+        return routeConstructor;
+    }
+
     listen(port: number = 8080, host: string = "0.0.0.0", listeningListener?: () => void) {
-        return http.createServer(async (request: IncomingMessage, response: ServerResponse) => {
+        const server = http.createServer(async (request: IncomingMessage, response: ServerResponse) => {
             let matched = this.trie.match(request.url ?? "/");
             for (let match of matched) {
                 for (let handler of match.handlers) {
@@ -63,7 +105,22 @@ export class AnyServer {
                     if (!next) return;
                 }
             }
-        }).listen(port, host, listeningListener);
+        });
+        server.on("upgrade", (request, socket, head) => {
+            this.wss.handleUpgrade(request, socket, head, (ws) => {
+                this.wss.emit('connection', ws, request);
+            });
+        });
+        this.wss.on('connection', async (ws, request) => {
+            let matched = this.trie.match(request.url ?? "/");
+            for (let match of matched) {
+                for (let handler of match.handlers) {
+                    let next = await handler(ws, request, match.params) as boolean;
+                    if (!next) return;
+                }
+            }
+        });
+        return server.listen(port, host, listeningListener);
     }
 }
 
@@ -74,6 +131,17 @@ app.http("/test/:id", "GET")
         console.log(request.method, request.url, request.params);
         response.write(`${request.method} ${request.url}`)
         response.end();
+    });
+
+app.ws("/ws")
+    .add((ws, request) => {
+        ws.addEventListener("open", (event) => {console.log("open", event);});
+        ws.addEventListener("close", (event) => {console.log("close", event);});
+        ws.addEventListener("error", (event) => {console.log("error", event);});
+        ws.addEventListener("message", (event) => {
+            console.log("message", event);
+            ws.send(JSON.stringify(event.data.toString()));
+        });
     });
 
 // app.http("/:test*", "GET")

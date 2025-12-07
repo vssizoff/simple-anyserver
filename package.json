@@ -12,6 +12,8 @@
   },
   "private": true,
   "dependencies": {
-    "route-trie": "^3.0.0"
+    "@types/ws": "^8.18.1",
+    "route-trie": "^3.0.0",
+    "ws": "^8.18.3"
   }
 }
